@@ -6,15 +6,25 @@ readme = "README.md"
 authors = [
     { name = "tong.liu", email = "szliutong@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.11"
 dependencies = [
-    "numpy>=2.1.2",
+    "av",
+    "matplotlib>=3.9.0",
+    "numpy<2.0",
+    "opencv-python",
+    "pybind11==2.11.0",
+    "pybind11-global==2.11.0",
+    "pygame>=2.6.1",
+    "pynput>=1.8.1",
+    "pyorbbecsdk @ file:///home/szliutong/Project/RealManArmControl/whl/pyorbbecsdk-2.0.13-cp310-cp310-linux_x86_64.whl",
     "robotic-arm>=1.1.1",
     "scipy>=1.15.3",
+    "setuptools>=78.1.0",
     "termcolor>=3.1.0",
     "torch>=2.9.0.dev20250711",
     "torchvision>=0.24.0.dev20250712",
     "tqdm>=4.66.5",
+    "wheel>=0.45.1",
 ]
 
 [project.scripts]
@@ -24,6 +34,9 @@ realmanarmcontrol = "realmanarmcontrol:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [[tool.uv.index]]
 name = "pytorch-nightly"
 url = "https://download.pytorch.org/whl/nightly/cu129"
@@ -31,3 +44,6 @@ url = "https://download.pytorch.org/whl/nightly/cu129"
 [[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple"
+
+[tool.uv.sources]
+pyorbbecsdk = { path = "whl/pyorbbecsdk-2.0.13-cp310-cp310-linux_x86_64.whl" }

@@ -35,7 +35,7 @@ class ArmDefault:
     }
 
     # Set to Default when start
-    default_pos = True
+    set_default_pos = True
 
     # Default Arm Jonit
     default_arm_joint = [0.0, 45.0, -100.0, 0.0, -90.0, 0.0]

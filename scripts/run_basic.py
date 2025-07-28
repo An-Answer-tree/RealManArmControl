@@ -1,40 +1,63 @@
+from dataclasses import asdict
+import math
+from matplotlib.pyplot import plot
 import os
 import sys
-import math
-from dataclasses import asdict
+from termcolor import colored
 
+
+from pyorbbecsdk import OBSensorType
 from realmanarmcontrol.base.rm_robot_interface import *
-from realmanarmcontrol.arm.controller import RobotArmController
+from realmanarmcontrol.arm.arm_controller import RobotArmController
+from realmanarmcontrol.sensor.orbbec_controller import Gemini335Controller
 from realmanarmcontrol.arm.config import ArmDefault
+from realmanarmcontrol.sensor.config import Gemini335Config
 
 def main():
+    line = '*' * 150
+    print(colored(line, color="yellow"))
+
     # Connect Robot and Set Default
-    controller: RobotArmController = RobotArmController(
-        default_pos=ArmDefault.default_pos,
-        default_work_frame=ArmDefault.default_work_frame,
-        default_tool_frame=ArmDefault.default_tool_frame,
-        default_arm_joint=ArmDefault.default_arm_joint,
-        ip=ArmDefault.ip,
-        level=ArmDefault.level,
-        mode=ArmDefault.mode
-        )
+    print(colored("Arm Initialization: ", "light_red"))
+    # arm_controller = RobotArmController(
+    #     set_default_pos=ArmDefault.set_default_pos,
+    #     default_work_frame=ArmDefault.default_work_frame,
+    #     default_tool_frame=ArmDefault.default_tool_frame,
+    #     default_arm_joint=ArmDefault.default_arm_joint,
+    #     ip=ArmDefault.ip,
+    #     level=ArmDefault.level,
+    #     mode=ArmDefault.mode
+    #     )
+    print(colored(line, color="yellow"))
+    
+    # Connect Camera, Set Default and Start
+    print(colored("Camera Initialization: ", "light_red"))
+    gemini_controller = Gemini335Controller(
+        RGB_width=Gemini335Config.RGB_width,
+        RGB_height=Gemini335Config.RGB_height,
+        RGB_fps=Gemini335Config.RGB_fps,
+        Depth_width=Gemini335Config.Depth_width,
+        Depth_height=Gemini335Config.Depth_height,
+        Depth_fps=Gemini335Config.Depth_fps,
+    )
+    print(colored(line, color="yellow"))
+
+
+    # Take photos
+    gemini_controller.take_photo()
     
     # Move looking at
-    eef_pos = [0.5, 0, 0]
-    look_at = [0.5, 0, -0.5]
+    # eef_pos = [0.5, 0, 0]
+    # look_at = [0.5, 0, -0.5]
+    # arm_controller.movej_p_look_at(eef_pos, look_at, v=30)
 
-    controller.movej_p_look_at(eef_pos, look_at, v=30)
-
-
-
+    # 
 
 
     # Disconnect
-    controller.disconnect()
+    # arm_controller.disconnect()
+    gemini_controller.disconnect()
     
-
-    
-
 
 if __name__ == "__main__":
     main()
