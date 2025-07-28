@@ -16,5 +16,5 @@ class Gemini335Config:
     Depth_fps = 30
 
     # RGBD Saved Path
-    saved_path = "saved_images"
+    saved_path = "rgb_depth_saved"
 

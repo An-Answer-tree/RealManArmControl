@@ -1,6 +1,7 @@
 from dataclasses import asdict
+import cv2
 import math
-from matplotlib.pyplot import plot
+import matplotlib.pyplot as plt
 import os
 import sys
 from termcolor import colored
@@ -44,7 +45,22 @@ def main():
 
 
     # Take photos
-    gemini_controller.take_photo()
+    time_stamp, RGB_image, Depth_image, Points = gemini_controller.take_photo()
+    u, v = (400, 200)
+    u2, v2 = (880, 200)
+    rgb_plot = cv2.cvtColor(RGB_image, cv2.COLOR_BGR2RGB)
+
+    print(gemini_controller.get_point_xyz_from_pointcloud(Points, u, v))
+    print(gemini_controller.get_point_xyz_from_pointcloud(Points, u2, v2))
+    
+    plt.figure(figsize=(8, 6))
+    plt.imshow(rgb_plot)
+    # Mark the point (u, v) in red, size 100
+    plt.scatter([u,u2], [v,v2], c='red', s=100, marker='o')
+    plt.title(f"RGB Image with marked point ({u}, {v})")
+    plt.axis('off')
+    plt.show()
+
     
     # Move looking at
     # eef_pos = [0.5, 0, 0]

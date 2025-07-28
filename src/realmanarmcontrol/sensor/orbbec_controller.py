@@ -8,8 +8,8 @@ from typing import Tuple, Optional
 # from pyorbbecsdk import *
 from pyorbbecsdk import Config, Pipeline, VideoStreamProfile, AlignFilter, PointCloudFilter
 from pyorbbecsdk import FrameSet, ColorFrame, DepthFrame
-from pyorbbecsdk import OBSensorType, OBFormat, OBStreamType
-from pyorbbecsdk import OBError
+from pyorbbecsdk import OBSensorType, OBFormat, OBStreamType, OBError
+from pyorbbecsdk import save_point_cloud_to_ply
 
 from realmanarmcontrol.sensor.utils import frame_to_bgr_image
 from realmanarmcontrol.sensor.config import Gemini335Config
@@ -32,7 +32,10 @@ class Gemini335Controller:
         Depth_height: int = Gemini335Config.Depth_height,
         Depth_fps: int = Gemini335Config.Depth_fps,
     ):
-        
+        # Useful paramaters
+        self.RGB_width = RGB_width
+        self.RGB_height = RGB_height
+
         # Create Camera Config and Pipeline
         self.config = Config()
         self.pipeline = Pipeline()
@@ -110,7 +113,6 @@ class Gemini335Controller:
             return
         width = frame.get_width()
         height = frame.get_height()
-        timestamp = frame.get_timestamp()
         scale = frame.get_depth_scale()
         depth_format = frame.get_format()
 
@@ -124,7 +126,7 @@ class Gemini335Controller:
         save_image_dir = os.path.join(Gemini335Config.saved_path, "depth_images")
         if not os.path.exists(save_image_dir):
             os.makedirs(save_image_dir, exist_ok=True)
-        filename = save_image_dir + "/depth_{}x{}_{}.png".format(width, height, timestamp)
+        filename = save_image_dir + "/depth_{}x{}_{}.png".format(width, height, self.time_stamp)
 
         cv2.imwrite(filename, data)
         print(colored(f"\nDepth image saved({data.shape}):\n{filename}", "yellow"))
@@ -133,17 +135,25 @@ class Gemini335Controller:
 
 
     def _save_color_frame(self, frame: ColorFrame):
+        """
+        Save RGB image to file
+
+        Args:
+            frame (ColorFrame): RGB frame from get_color_frame()
+
+        Returns:
+            image (np.ndarray): Image matrix
+        """
         if frame is None:
             return
         
         width = frame.get_width()
         height = frame.get_height()
-        timestamp = frame.get_timestamp()
 
         save_image_dir = os.path.join(Gemini335Config.saved_path, "RBG_images")
         if not os.path.exists(save_image_dir):
             os.makedirs(save_image_dir, exist_ok=True)
-        filename = save_image_dir + "/RBG_{}x{}_{}.png".format(width, height, timestamp)
+        filename = save_image_dir + "/RBG_{}x{}_{}.png".format(width, height, self.time_stamp)
 
         image = frame_to_bgr_image(frame)
         if image is None:
@@ -155,7 +165,16 @@ class Gemini335Controller:
 
         return image
     
-    def _save_pointcloud(self, frames):
+    def _save_pointclouds(self, frames):
+        """
+        Save point clouds from frames to file.
+
+        Args:
+            frames : raw frames data gotten by camera
+
+        Returns:
+            points (np.ndarray): 6D colored points array
+        """
         # Create point cloud filter
         point_cloud_filter = PointCloudFilter()
         # Apply the alignment filter
@@ -166,9 +185,24 @@ class Gemini335Controller:
         point_cloud_frame = point_cloud_filter.process(frame)
         points = point_cloud_filter.calculate(point_cloud_frame)
 
+        save_dir = os.path.join(Gemini335Config.saved_path, "point_clouds")
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
+        filename = save_dir + "/PointClouds_{}".format(self.time_stamp)
+
+        np.save(filename, points)
+        print(colored(f"\nPoint Clouds saved({points.shape}):\n{filename}", "yellow"))
+
+        return points
 
 
     def reboot(self, device):
+        """
+        Reboot the camera device
+
+        Args:
+            device : Device you want to reboot
+        """
         device.reboot()
         print(colored(f"\nReboot the device: {self.serial_number}", "light_red"))
     
@@ -255,7 +289,47 @@ class Gemini335Controller:
 
         return (u, v, depth_mm)
     
+    def get_point_xyz_from_pointcloud(
+        self,
+        points: np.ndarray,
+        u: int,
+        v: int
+    ) -> Tuple[float, float, float]:
+        """
+        Given a flattened RGBD point‐cloud array and a pixel (u, v) in the aligned RGB image,
+        return the (X, Y, Z) in camera coordinates.
+
+        Args:
+            points: np.ndarray of shape (H*W, 6), each row = (X, Y, Z, R, G, B)
+            u (int): pixel column, 0 <= u < self.RGB_width
+            v (int): pixel row,    0 <= v < self.RGB_height
+
+        Returns:
+            (X, Y, Z): float tuple in mm.
+        """
+        H = self.RGB_height
+        W = self.RGB_width
+
+        if points.ndim != 2 or points.shape[0] != H * W or points.shape[1] < 3:
+            raise ValueError(colored(f"points must be (H*W, >=3), got {points.shape}", "red"))
+
+        if not (0 <= u < W and 0 <= v < H):
+            raise ValueError(colored(f"pixel ({u},{v}) out of bounds 0–{W-1},0–{H-1}", "red"))
+
+        idx = v * W + u
+        X, Y, Z = points[idx, 0], points[idx, 1], points[idx, 2]
+        return X, Y, Z
+    
     def depth_post_process(self, depth_frame):
+        """
+        Post-Process the depth data using recommended filter
+
+        Args:
+            depth_frame (np.ndarray): Depth frame from get_depth_frame()
+
+        Returns:
+            depth_frame (np.ndarray): Processed depth frame
+        """
         for post_filter in self.filter_list:
             if post_filter.is_enabled():
                 new_depth_frame = post_filter.process(depth_frame)
@@ -270,10 +344,13 @@ class Gemini335Controller:
             None
 
         Returns:
-            Tuple[np.ndarray, np.ndarray]: 
-                - RGB_image: BGR color image (png) as a NumPy array.
-                - Depth_graph: Depth Graph (png) as a NumPy array.
+            Tuple: 
+                - time_stamp: int
+                - RGB_image: BGR color image (png) as a numpy.ndarray.
+                - Depth_graph: Depth Graph (png) as a numpy.ndarray.
+                - Point: point clouds as a numpy.ndarray
         """
+        self.time_stamp = int(time.time() * 1000)
         frames = None
 
         while True:
@@ -285,6 +362,9 @@ class Gemini335Controller:
             if not frames:
                 continue
             
+            # test point cloud
+            Points = self._save_pointclouds(frames)
+
             frames = frames.as_frame_set()
             color_frame = frames.get_color_frame()
             depth_frame = frames.get_depth_frame()
@@ -299,4 +379,4 @@ class Gemini335Controller:
         depth_frame = self.depth_post_process(depth_frame)
         Depth_graph = self._save_depth_frame(depth_frame)
 
-        return (RGB_image, Depth_graph)
+        return (self.time_stamp, RGB_image, Depth_graph, Points)
