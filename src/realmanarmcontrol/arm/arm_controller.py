@@ -267,7 +267,44 @@ class RobotArmController:
         return r.as_euler('xyz', degrees=False), rotation_matrix  # Return in radians
 
     # ----------Arm_Moving_Function----------
-    def movej_p_look_at(self, target_pos: list, look_at_pos: list, v=10, r=0, connect=0, block=1):
+    def movej(self, joint: list[float], v: int = 30, r: int = 0, connect: int = 0, block: int = 1) -> int:
+        """Perform joint space motion with default parameters and raise error on failure.
+
+        This is a wrapper for ``rm_movej`` that moves the robot arm to the specified
+        joint angles in joint space. It uses default parameters for speed, blend
+        radius, connection flag, and blocking behavior. Non-zero status codes will
+        raise a RuntimeError with a descriptive message.
+
+        Args:
+            joint (list[float]): Target joint angles in degrees for each joint.
+            v (int, optional): Speed scaling factor (1–100). Defaults to 30.
+            r (int, optional): Blend radius scaling factor (0–100). Defaults to 0.
+            connect (int, optional): Trajectory connection flag. Defaults to 0.
+            block (int, optional): Blocking mode. Defaults to 1.
+
+        Returns:
+            int: Status code (0 for success).
+
+        Raises:
+            RuntimeError: If the status code is non-zero, with a message describing the failure.
+        """
+        code = self.robot.rm_movej(joint, v, r, connect, block)
+
+        if code != 0:
+            error_map = {
+                1: "Controller error: invalid parameter or arm state error.",
+                -1: "Send error: data send failure.",
+                -2: "Receive error: data receive failure or controller timeout.",
+                -3: "Parse error: response format invalid or incomplete.",
+                -4: "Device mismatch: current device is not in joint mode.",
+                -5: "Timeout: single-thread mode timed out.",
+            }
+            message = error_map.get(code, f"Unknown error with status code {code}.")
+            raise RuntimeError(f"movej failed: {message}")
+
+        return code
+
+    def movej_p_look_at(self, target_pos: list, look_at_pos: list, v=30, r=0, connect=0, block=1):
         """
         Move the robot to a target position while maintaining its Z-axis pointing toward a specific target point.
 

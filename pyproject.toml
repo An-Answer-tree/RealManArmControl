@@ -44,4 +44,4 @@ name = "pypi"
 url = "https://pypi.org/simple"
 
 [tool.uv.sources]
-pyorbbecsdk = { path = "whl/pyorbbecsdk-2.0.13-cp310-cp310-linux_x86_64.whl" }
+pyorbbecsdk = { path = "whl/pyorbbecsdk-2.0.13-cp310-cp310-linux_aarch64.whl" }
