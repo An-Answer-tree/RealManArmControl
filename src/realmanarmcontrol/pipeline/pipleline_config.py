@@ -9,7 +9,7 @@ class PipelineConfig(Gemini335Config, ArmDefault):
     # Eye-on-hand calibration offsets (tool frame → camera/EE), in meters.
     delta_x: float = 0
     delta_y: float = 0.0988
-    delta_z: float = 0.171
+    delta_z: float = 0.168
     delta_vector: Tuple = (delta_x, delta_y, delta_z)
 
     # Arm Config

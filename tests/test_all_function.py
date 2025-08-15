@@ -28,6 +28,7 @@ def main():
         default_work_frame=ArmDefault.default_work_frame,
         default_tool_frame=ArmDefault.default_tool_frame,
         default_arm_joint=ArmDefault.default_arm_joint,
+        have_gripper=ArmDefault.have_gripper,
         ip=ArmDefault.ip,
         level=ArmDefault.level,
         mode=ArmDefault.mode
@@ -45,8 +46,6 @@ def main():
         Depth_fps=Gemini335Config.Depth_fps,
     )
     print(colored(line, color="yellow"))
-
-
 
     # ======================Algo tool2base======================
     # arm_controller.movej_p_look_at([0.5, 0, 0.6], [0.6, 0, 0.6], up=[0, 0, 1], v=5)

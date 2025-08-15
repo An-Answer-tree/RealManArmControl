@@ -47,6 +47,9 @@ class RobotArmController:
         self.robot = RoboticArm(self.thread_mode)
         self.handle = self.robot.rm_create_robot_arm(ip, port, level)
         self.have_gripper = have_gripper
+
+        # Gripper Config
+        self.set_gripper_min_max(0, 150)
         
         # Set Default Work Frame
         # Get Available Work Frames
@@ -271,77 +274,89 @@ class RobotArmController:
 
     # ==========================================Algo_Function==========================================
     def get_euler_towards_object(self,
-                                eef_pos: Sequence[float],
-                                target_pos: Sequence[float],
-                                up: Sequence[float] = (0.0, 0.0, 1.0)
-                                ) -> Tuple[list[float], list[float], np.ndarray]:
-        """Return orientation as w-first quaternion and XYZ Euler angles for a tool Z-axis pointing to a target.
+                                eef_pos: np.ndarray,
+                                target_pos: np.ndarray,
+                                up: list = [0, 0, 1]):
+        """Compute intrinsic-XYZ Euler angles for a look-at tool orientation.
 
-        Constructs a right-handed orthonormal frame at the end-effector such that
-        +Z points from ``eef_pos`` to ``target_pos``. The +Y axis is obtained by
-        projecting the provided ``up`` vector onto the plane orthogonal to +Z, and
-        +X is computed as ``Y × Z``. The orientation is returned both as a unit
-        quaternion in ``[qw, qx, qy, qz]`` order and as Euler angles with the
-        sequence ``xyz`` (radians). The 3×3 rotation matrix (columns ``[x, y, z]``)
-        is also returned.
+        Constructs a right-handed orthonormal frame where:
+        - The local +Z axis points from ``eef_pos`` to ``target_pos``.
+        - The local +Y axis is the **negative** of the projection of ``up`` onto the
+            plane orthogonal to +Z (i.e., as close as possible to ``-up`` while
+            remaining perpendicular to +Z).
+        - The local +X axis is computed as ``X = Y × Z`` to guarantee a proper
+            rotation (determinant +1).
+
+        The function returns the intrinsic XYZ Euler angles (radians) that realize
+        this orientation, along with the 3×3 rotation matrix whose columns are
+        ``[X, Y, Z]`` expressed in the base frame.
 
         Args:
-        eef_pos (Sequence[float]): End-effector position ``[x, y, z]`` in meters.
-        target_pos (Sequence[float]): Target position ``[x, y, z]`` in meters.
-        up (Sequence[float], optional): Preferred global up direction used to
-            disambiguate roll. Defaults to ``(0.0, 0.0, 1.0)``.
+            eef_pos: Current end-effector 3D position ``[x, y, z]`` (meters).
+            target_pos: 3D position to look at ``[x, y, z]`` (meters).
+            up: World-up reference vector (default ``[0, 0, 1]``). It can be non-unit.
 
         Returns:
-        Tuple[list[float], list[float], np.ndarray]: A triple
-            ``(quaternion_wxyz, euler_rot, rotation_matrix)`` where:
-            - ``quaternion_wxyz``: Unit quaternion as ``[qw, qx, qy, qz]``.
-            - ``euler_rot``: Euler angles ``[rx, ry, rz]`` in radians with sequence ``xyz``.
-            - ``rotation_matrix``: 3×3 matrix with columns ``[x_axis, y_axis, z_axis]``.
+            tuple[list[float], np.ndarray]: A pair ``(euler_xyz, R_base_tool)`` where
+            ``euler_xyz`` is ``[rx, ry, rz]`` (radians, intrinsic XYZ) and
+            ``R_base_tool`` is a ``(3, 3)`` rotation matrix with columns ``[X, Y, Z]``.
 
         Raises:
-        ValueError: If ``eef_pos`` and ``target_pos`` are (nearly) identical,
-            producing a degenerate +Z direction.
-        RuntimeError: If the chosen ``up`` vector is (near-)colinear with +Z and a
-            valid +Y axis cannot be constructed.
+            ValueError: If positions are invalid or nearly identical (undefined look
+                direction).
+            RuntimeError: If the projected up-vector is (near) collinear with Z, or if
+                the resulting frame is degenerate.
+
+        Notes:
+            - Uses Gram–Schmidt to orthogonalize the up-vector against Z.
+            - Ensures a proper right-handed rotation by defining ``X = Y × Z``.
         """
+        # -- sanitize inputs --
         eef_pos = np.asarray(eef_pos, dtype=float).reshape(3)
         target_pos = np.asarray(target_pos, dtype=float).reshape(3)
         up_vec = np.asarray(up, dtype=float).reshape(3)
 
-        # Direction from EEF to target → +Z axis
-        diff = target_pos - eef_pos
-        norm = np.linalg.norm(diff)
-        if norm < 1e-9:
-            raise ValueError("eef_pos and target_pos are too close (degenerate direction).")
-        z_axis = diff / norm
+        if not (np.all(np.isfinite(eef_pos)) and np.all(np.isfinite(target_pos)) and np.all(np.isfinite(up_vec))):
+            raise ValueError(colored("Non-finite values detected in inputs (NaN/Inf).", "red"))
 
-        # +Y from projecting 'up' onto plane ⟂ Z
+        if np.allclose(eef_pos, target_pos, atol=1e-6):
+            raise ValueError(colored("eef_pos and target_pos coincide; look direction is undefined.", "red"))
+
+        # -- Z axis: point to target --
+        z_axis = target_pos - eef_pos
+        zn = np.linalg.norm(z_axis)
+        if zn < 1e-9:
+            raise RuntimeError(colored("Direction vector is near zero; cannot define +Z.", "red"))
+        z_axis = z_axis / zn
+
+        # -- Y axis: negative of up's projection onto plane orthogonal to Z --
+        # proj = (up · z) z ;  y_raw = -(up - proj)
         proj = np.dot(up_vec, z_axis) * z_axis
-        y_axis = -(up_vec - proj)
+        x_axis = (up_vec - proj)
+        xn = np.linalg.norm(x_axis)
+        if xn < 1e-9:
+            # keep your original error-handling logic (no fallback): raise
+            raise RuntimeError(colored("The Z-axis is collinear with the vertical direction (degenerate up).", "red"))
+        x_axis = x_axis / xn
 
-        if np.linalg.norm(y_axis) < 1e-9:
-            raise RuntimeError(colored(f"Failed for wrong direction. Don't set z-axis totally up.", "red"))
-        else:
-            y_axis /= np.linalg.norm(y_axis)
-            x_axis = np.cross(y_axis, z_axis)
+        # -- X axis: ensure right-handed proper rotation: X = Y × Z --
+        y_axis = np.cross(z_axis, x_axis)
+        yn = np.linalg.norm(y_axis)
+        if yn < 1e-9:
+            raise RuntimeError(colored("Failed to construct a valid X axis (degenerate frame).", "red"))
+        y_axis = y_axis / yn
 
-        # Orthonormalize for numerical stability
-        x_axis /= np.linalg.norm(x_axis)
-        y_axis /= np.linalg.norm(y_axis)
-        z_axis /= np.linalg.norm(z_axis)
+        # -- rotation matrix with columns [X, Y, Z] --
+        R_base_tool = np.stack([x_axis, y_axis, z_axis], axis=1)
 
-        rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))  # columns are basis vectors
+        # -- Euler (intrinsic XYZ, radians) --
+        euler_xyz = R.from_matrix(R_base_tool).as_euler('xyz', degrees=False).tolist()
 
-        # SciPy returns [qx, qy, qz, qw]; reorder to [qw, qx, qy, qz]
-        quat_xyzw = R.from_matrix(rotation_matrix).as_quat()
-        eluer_rot = R.from_matrix(rotation_matrix).as_euler('xyz', degrees=False).tolist()
-        qw = float(quat_xyzw[3])
-        qx = float(quat_xyzw[0])
-        qy = float(quat_xyzw[1])
-        qz = float(quat_xyzw[2])
-        quat_wxyz = [qw, qx, qy, qz]
+        # colored success output
+        print(colored("✓ look-at orientation computed.", "green"),
+            colored(f"Euler(XYZ, rad)={np.array(euler_xyz)}\n", "cyan"))
 
-        return quat_wxyz, eluer_rot, rotation_matrix
+        return euler_xyz, R_base_tool
 
     def tool_point_to_base(self, point_tool: Sequence[float]) -> np.ndarray:
         """Transform a point from the tool frame to the base frame.
@@ -441,7 +456,56 @@ class RobotArmController:
 
         return code
     
-    def movep(self, pose: list[float]) -> None:
+    def movej_p(self,
+                pose: list[float],
+                v: int = 30,
+                r: int = 0,
+                connect: int = 0,
+                block: int = 1) -> int:
+        """Move in joint-space to a Cartesian pose with light validation and colored logs.
+
+        Args:
+            pose: Target pose ``[x, y, z, rx, ry, rz]`` (meters, radians; intrinsic XYZ).
+            v: Speed percentage ``1..100``. Defaults to 30.
+            r: Blend percentage ``0..100`` (0=disabled). Defaults to 0.
+            connect: Trajectory connection flag ``0|1``. Defaults to 0.
+            block: Blocking/timeout setting (see controller docs). Defaults to 1.
+
+        Returns:
+            int: Status code from the controller (0 on success).
+        """
+        # --- minimal normalization ---
+        arr = np.asarray(pose, dtype=float).flatten()
+        if arr.size != 6 or not np.all(np.isfinite(arr)):
+            raise ValueError("pose must be 6 finite numbers [x,y,z,rx,ry,rz].")
+
+        v, r, connect, block = int(v), int(r), int(connect), int(block)
+
+        # --- delegate ---
+        try:
+            status = self.robot.rm_movej_p(arr.tolist(), v, r, connect, block)
+        except AttributeError as e:
+            print(colored("✗ movej_p failed: rm_movej_p missing.", "red"))
+            raise
+
+        # --- compact reporting ---
+        if status == 0:
+            print(colored("✓ movej_p executed.", "green"),
+                colored(f"pose={arr.tolist()}, v={v}, r={r}, connect={connect}, block={block}", "cyan"))
+        else:
+            reason = {
+                1:  "invalid parameters or robot state",
+                -1: "send failure",
+                -2: "receive timeout",
+                -3: "response parse error",
+                -4: "device verification failed",
+                -5: "single-thread timeout",
+            }.get(status, "unknown error")
+            print(colored(f"✗ movej_p failed (code={status})", "red"),
+                colored(f"reason: {reason}", "yellow"))
+        return status
+
+    def move_follow(self, pose: list[float]) -> None:
         """Stream a Cartesian pose in follow mode (xyz + quaternion or Euler).
 
         Thin wrapper that forwards the target pose to ``rm_movep_follow`` for
@@ -480,7 +544,7 @@ class RobotArmController:
             print(f"Reason: {msg}")
             print(f"Suggestion: {hint}")
 
-    def movej_p_look_at(self, target_pos: list, look_at_pos: list, up=[0, 0, 1], v=30, r=0, connect=0, block=1) -> None:
+    def movej_p_look_at(self, target_pos: list, look_at_pos: list, up=[0, 0, 1], v=5, r=0, connect=0, block=1) -> None:
         """Move to a target position while keeping the end-effector Z-axis pointing to a point.
 
         Computes an orientation that makes the end-effector's local Z-axis point to
@@ -511,8 +575,8 @@ class RobotArmController:
 
         """
         # Compute Euler orientation (radians) that makes the local Z-axis "look at" the target point.
-        rx, ry, rz = self.get_euler_towards_object(eef_pos=target_pos, target_pos=look_at_pos, up=up)[1]
-        pose = target_pos + [float(rx), float(ry), float(rz)]
+        rx, ry, rz = self.get_euler_towards_object(eef_pos=target_pos, target_pos=look_at_pos, up=up)[0]
+        pose = list(target_pos) + [float(rx), float(ry), float(rz)]
 
         # Execute joint-space motion
         result = self.robot.rm_movej_p(pose, v=v, r=r, connect=connect, block=block)
@@ -548,6 +612,95 @@ class RobotArmController:
 
         
     # ==========================================Gripper Control==========================================
+    def set_gripper_min_max(self, min, max) -> int:
+        """Set gripper travel limits (minimum and maximum opening) with colored output.
+
+        This method validates inputs and delegates to ``rm_set_gripper_route``.
+        The controller persists the limits across power cycles.
+
+        Args:
+            min (int): Minimum opening (inclusive), valid range ``0..1000`` (dimensionless).
+            max (int): Maximum opening (inclusive), valid range ``0..1000`` (dimensionless).
+
+        Returns:
+            int: Status code returned by the controller.
+                - ``0``: Success.
+                - ``1``: Controller returned false (invalid parameters or robot state error).
+                - ``-1``: Data send failure.
+                - ``-2``: Data receive failure or controller timeout.
+                - ``-3``: Response parsing failure.
+                - ``-4``: Timeout.
+
+        Raises:
+            TypeError: If inputs are not numeric.
+            ValueError: If inputs are out of range or ``min > max``.
+            RuntimeError: If the SDK method is unavailable on this instance.
+        """
+        # ---- input validation ----
+        if not (isinstance(min, (int, float)) and isinstance(max, (int, float))):
+            raise TypeError("min and max must be numeric (int or float).")
+
+        min_route = int(min)
+        max_route = int(max)
+
+        if not (0 <= min_route <= 1000 and 0 <= max_route <= 1000):
+            raise ValueError(
+                f"min/max out of range: min={min_route}, max={max_route} (expected 0..1000)."
+            )
+        if min_route > max_route:
+            raise ValueError(f"min must be <= max (got min={min_route}, max={max_route}).")
+
+        # ---- delegate to SDK ----
+        try:
+            status = self.robot.rm_set_gripper_route(min_route, max_route)
+        except AttributeError as e:
+            hdr = colored("✗ set_gripper_min_max failed", "red")
+            print(hdr)
+            print(colored(
+                "Reason: rm_set_gripper_route is not available on this instance.",
+                "yellow"
+            ))
+            print(colored(
+                "Suggestion: Ensure the SDK/driver is initialized and the method is bound "
+                "(e.g., self.robot.rm_set_gripper_route or self.rm_set_gripper_route).",
+                "magenta"
+            ))
+            raise RuntimeError(
+                "rm_set_gripper_route is not available on this instance."
+            ) from e
+
+        # ---- human-readable diagnostics ----
+        messages = {
+            0:  "Success.",
+            1:  "Controller returned false: invalid parameters or robot state error.",
+            -1: "Data send failure (communication issue).",
+            -2: "Data receive failure or controller timeout.",
+            -3: "Response parsing failure (malformed/incomplete data).",
+            -4: "Operation timed out.",
+        }
+        suggestions = {
+            0:  f"Limits persisted: min={min_route}, max={max_route}.",
+            1:  ("Verify: 0<=min<=max<=1000; controller not in E-Stop/alarm; gripper enabled "
+                "and homed; no motion/hold interlocks; correct device selected."),
+            -1: "Check the physical link/network quality and SDK connection handle.",
+            -2: "Increase controller timeout; ensure controller is responsive and not busy.",
+            -3: "Check controller firmware/protocol compatibility; update SDK if needed.",
+            -4: "Retry with a larger timeout; ensure controller load is normal.",
+        }
+
+        if status == 0:
+            print(
+                colored("✓ set_gripper_min_max ok", "green"),
+                colored(f"(min={min_route}, max={max_route})", "cyan")
+            )
+        else:
+            print(colored(f"✗ set_gripper_min_max failed (code={status})", "red"))
+            print(colored(f"  Reason: {messages.get(status, 'Unknown error code.')}", "yellow"))
+            print(colored(f"  Suggestion: {suggestions.get(status, 'Check parameters, controller state, and comms.')}", "magenta"))
+
+        return status
+
+
     def release_gripper(self, speed: int, block: bool = True, timeout: int = 5) -> None:
         """Open the gripper to its maximum position.
 
@@ -630,7 +783,7 @@ class RobotArmController:
             msg = code_map.get(tag, "Unknown error.")
             raise RuntimeError(f"Failed to set gripper position (code {tag}): {msg}")
         
-    def gripper_keep_pick(self, speed: int = 500, force: int = 100, block: bool = True, timeout: int = 5) -> None:
+    def gripper_keep_pick(self, speed: int = 500, force: int = 100, block: bool = True, timeout: int = 10) -> None:
         """Perform continuous force-controlled gripping.
 
         Commands the gripper to close at a specified speed and maintain the given

@@ -381,5 +381,6 @@ class Gemini335Controller:
         # Post-Process and Save Depth Image
         depth_frame = self.depth_post_process(depth_frame)
         Depth_graph = self._save_depth_frame(depth_frame)
+        print()
 
         return (self.time_stamp, RGB_image, Depth_graph, Points)

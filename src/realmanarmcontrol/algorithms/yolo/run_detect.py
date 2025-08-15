@@ -104,7 +104,7 @@ class Detector:
             p3 = (x1i + 3 * width // 4, center_y)
             
             points = [p1, p2, p3]
-            self.console.print(f"[green]✅ Points: {points}[/green]")
+            self.console.print(f"[green]✅ Points: {points}[/green]\n")
             return points
         except Exception as e:
             self.console.print(f"[red]❌ Detection failed: {e}[/red]")
