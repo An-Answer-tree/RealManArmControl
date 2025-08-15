@@ -1,2 +1,6 @@
-/rgb_depth_saved
-/rgb_depth_saved copy
+rgb_depth_saved/
+.venv/
+.vscode/
+__pycache__/
+
+uv.lock
