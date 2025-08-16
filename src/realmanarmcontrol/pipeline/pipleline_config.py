@@ -9,7 +9,8 @@ class PipelineConfig(Gemini335Config, ArmDefault):
     # Eye-on-hand calibration offsets (tool frame → camera/EE), in meters.
     delta_x: float = 0
     delta_y: float = 0.0988
-    delta_z: float = 0.168
+    # 0.171
+    delta_z: float = 0.165
     delta_vector: Tuple = (delta_x, delta_y, delta_z)
 
     # Arm Config
@@ -35,4 +36,7 @@ class PipelineConfig(Gemini335Config, ArmDefault):
     # YOLO
     model_path = "/home/user/Project/RealManArmControl/src/realmanarmcontrol/algorithms/yolo/model/best.pt"
 
+
+    # UltraSound Search Config
+    search_degree = 10
     
