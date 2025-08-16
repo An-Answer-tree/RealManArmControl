@@ -294,8 +294,8 @@ class Gemini335Controller:
             data [np.uint16]: depth graph (mm)
         """
         # Process depth frame to depth data
-        width = frame.get_width()
-        height = frame.get_height()
+        width = self.Depth_width
+        height = self.Depth_height
         # scale = frame.get_depth_scale()
         data = np.frombuffer(frame.get_data(), dtype=np.uint16)
         data = data.reshape((height, width))
@@ -328,8 +328,8 @@ class Gemini335Controller:
             raise RuntimeError(colored("\nfailed to convert frame to image", "red"))
         
         # Image infomation
-        width = frame.get_width()
-        height = frame.get_height()
+        width = self.RGB_width
+        height = self.RGB_height
 
         # Create RGB image save directory
         save_image_dir = os.path.join(self.save_path, "RGB_images")
@@ -401,7 +401,8 @@ class Gemini335Controller:
                     raise RuntimeError(colored("depth data is not complete", "red"))
 
                 new_depth_frame = post_filter.process(depth_frame)
-                depth_frame = new_depth_frame.as_depth_frame() 
+                depth_frame = new_depth_frame.as_depth_frame()
+        return  depth_frame
 
     
     def get_depth(
