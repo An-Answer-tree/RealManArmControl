@@ -16,7 +16,7 @@ dependencies = [
     "pybind11-global==2.11.0",
     "pygame>=2.6.1",
     "pynput>=1.8.1",
-    "pyorbbecsdk @ file:///home/user/Project/RealManArmControl/whl/pyorbbecsdk-2.0.13-cp310-cp310-linux_x86_64.whl",
+    "pyorbbecsdk @ file:///home/szliutong/Project/RealManArmControl/whl/pyorbbecsdk-2.0.13-cp310-cp310-linux_x86_64.whl",
     "rich>=14.1.0",
     "robotic-arm>=1.1.1",
     "scipy>=1.15.3",
