@@ -8,59 +8,6 @@ from termcolor import colored
 from realmanarmcontrol.pipeline.camera_arm_pipeline import Pipeline
 from realmanarmcontrol.pipeline.pipleline_config import PipelineConfig
 from realmanarmcontrol.algorithms.yolo.run_detect import Detector
-
-def ultrasound_search(pipeline: Pipeline):
-    """Wiggle the end-effector orientation while keeping XYZ fixed.
-
-    This routine keeps the current TCP position unchanged and applies small
-    intrinsic-XYZ Euler offsets (in radians) to “wiggle” the tool orientation
-    around the current pose. Offsets are executed in the **tool frame**
-    (frame_flag=1) via ``movel_offset``; translation offsets are zero.
-
-    Args:
-        pipeline: Active Pipeline instance that provides access to the arm controller.
-
-    Returns:
-        None. Prints colored status for each step.
-
-    Notes:
-        This function is intended for small angular perturbations to probe or
-        refine a sensing/ultrasound pose while holding the TCP position constant.
-    """
-    # --- configuration ---
-    delta_deg = 5.0                     # Small angular step in degrees
-    v, r, connect, block = 10, 0, 1, 0  # Conservative motion parameters
-    delta = np.deg2rad(delta_deg)
-
-    # --- read current pose (for logging only) ---
-    current_pose = pipeline.arm_controller.get_current_end_pose()
-    pos = np.array(current_pose[:3], dtype=float)
-    euler = np.array(current_pose[3:], dtype=float)
-    print(colored("Current TCP pose:", "blue"),
-          colored(f"pos={pos.tolist()}, euler(XYZ,rad)={euler.tolist()}", "cyan"))
-
-    # --- build a small wobble pattern: +rx, -rx, +ry, -ry (keep xyz fixed) ---
-    offsets = np.array([
-        [0.0, 0.0, 0.0, +delta, 0.0,   0.0],
-        [0.0, 0.0, 0.0, -delta, 0.0,   0.0],
-        [0.0, 0.0, 0.0,  0.0,  +delta, 0.0],
-        [0.0, 0.0, 0.0,  0.0,  -delta, 0.0],
-        # To add a slight yaw (rz) wobble, uncomment the following:
-        # [0.0, 0.0, 0.0,  0.0,  0.0,  +delta],
-        # [0.0, 0.0, 0.0,  0.0,  0.0,  -delta],
-    ], dtype=float)
-
-    # --- execute pattern ---
-    for i, off in enumerate(offsets, start=1):
-        offset = current_pose + off
-        status = pipeline.arm_controller.movej_p(
-            pose=offset,
-            v=v,
-            r=r,
-            connect=connect,
-            block=block
-        )
-    print()
         
 
 if __name__ == "__main__":
@@ -71,7 +18,7 @@ if __name__ == "__main__":
 
     # Gripper the equipment
     # pipeline.arm_controller.set_gripper_pos(150)
-    # time.sleep(3)
+    # time.sleep(5)
     pipeline.arm_controller.gripper_keep_pick(speed=500, force=1000, block=False)
     # time.sleep(5)
 
@@ -105,19 +52,24 @@ if __name__ == "__main__":
         base_point = pipeline.camera_point_to_base(camera_point)
         base_points.append(base_point)
 
+    count = 1
     for base_point in base_points:
         # Move Arm
         target = base_point
-        lookat = target - [-0.1, 0, 0.5]
+        lookat = target - [-0.1, 0, 0.4]
         pipeline.arm_controller.movej_p_look_at(target, lookat, v=10)
-        ultrasound_search(pipeline)
-        # time.sleep(2)
+        if count == 2:
+            for _ in range(4):
+                pipeline.ultrasound_search()
+        else:
+            pipeline.ultrasound_search(v=5, r=0, connect=0, block=1)
         target = target + np.array([0, 0, 0.01])
         pipeline.arm_controller.movej_p_look_at(target, lookat, v=5)
+        count += 1
 
 
     # Lift arm
-    time.sleep(5)
+    time.sleep(1)
     pipeline.arm_controller.movej(config.default_arm_joint)
 
 

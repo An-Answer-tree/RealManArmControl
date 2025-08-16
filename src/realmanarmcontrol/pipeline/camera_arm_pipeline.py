@@ -77,6 +77,10 @@ class Pipeline():
         self.arm_controller = self.create_arm()
         self.camera_controller = self.create_camera()
         self.camera_calibration = pipeline_config.delta_vector
+
+        # UltraSearch Config
+        self.search_degree = pipeline_config.search_degree
+
     
 
     def create_arm(self):
@@ -169,3 +173,57 @@ class Pipeline():
         point_tool = self.camera_point_to_tool(point_camera)  # (3,)
         point_base = np.asarray(self.arm_controller.tool_point_to_base(point_tool), dtype=float).reshape(3)
         return point_base
+    
+    # Ultrasound search
+    def ultrasound_search(self, search_degree = -1, v: int = 5, r: int = 0, connect: int = 0, block: int = 1):
+        """Wiggle the end-effector orientation while keeping XYZ fixed.
+
+        This routine keeps the current TCP position unchanged and applies small
+        intrinsic-XYZ Euler offsets (in radians) to “wiggle” the tool orientation
+        around the current pose. Offsets are executed in the **tool frame**
+        (frame_flag=1) via ``movel_offset``; translation offsets are zero.
+
+        Args:
+            pipeline: Active Pipeline instance that provides access to the arm controller.
+
+        Returns:
+            None. Prints colored status for each step.
+
+        Notes:
+            This function is intended for small angular perturbations to probe or
+            refine a sensing/ultrasound pose while holding the TCP position constant.
+        """
+        # --- configuration --- 
+        if search_degree != -1:
+            self.search_degree = search_degree
+        delta = np.deg2rad(self.search_degree)
+
+        # --- read current pose (for logging only) ---
+        current_pose = self.arm_controller.get_current_end_pose()
+        pos = np.array(current_pose[:3], dtype=float)
+        euler = np.array(current_pose[3:], dtype=float)
+        print(colored("Current TCP pose:", "blue"),
+            colored(f"pos={pos.tolist()}, euler(XYZ,rad)={euler.tolist()}", "cyan"))
+
+        # --- build a small wobble pattern: +rx, -rx, +ry, -ry (keep xyz fixed) ---
+        offsets = np.array([
+            [0.0, 0.0, 0.0, +delta, 0.0,   0.0],
+            [0.0, 0.0, 0.0, -delta, 0.0,   0.0],
+            [0.0, 0.0, 0.0,  0.0,  +delta, 0.0],
+            [0.0, 0.0, 0.0,  0.0,  -delta, 0.0],
+            # To add a slight yaw (rz) wobble, uncomment the following:
+            [0.0, 0.0, 0.0,  0.0,  0.0,  +delta],
+            [0.0, 0.0, 0.0,  0.0,  0.0,  -delta],
+        ], dtype=float)
+
+        # --- execute pattern ---
+        for i, off in enumerate(offsets, start=1):
+            offset = current_pose + off
+            status = self.arm_controller.movej_p(
+                pose=offset,
+                v=v,
+                r=r,
+                connect=connect,
+                block=block
+            )
+        print()
