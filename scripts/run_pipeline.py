@@ -41,17 +41,21 @@ if __name__ == "__main__":
         camera_point = tuple(v / 1000.0 for v in camera_point)
         camera_points.append(camera_point)
     print(colored(f"Camera points: {camera_points}\n", "cyan"))
-    # Check Point
+    # Check camera points
     for i, pt in enumerate(camera_points):
         if tuple(pt) == (0, 0, 0):
             raise ValueError(colored(f"camera_points[{i}] is all zeros", "red"))
-        
+    
+    # Convert camera points to base points
     base_points = []
     for camera_point in camera_points:
         # Camera point to base point
         base_point = pipeline.camera_point_to_base(camera_point)
         base_points.append(base_point)
+    print(colored(f"Camera to Base points: {base_points}\n", "cyan"))
 
+
+    # Execute ultra sound detection
     count = 1
     for base_point in base_points:
         # Move Arm
@@ -59,7 +63,7 @@ if __name__ == "__main__":
         lookat = target - [-0.1, 0, 0.4]
         pipeline.arm_controller.movej_p_look_at(target, lookat, v=10)
         if count == 2:
-            for _ in range(4):
+            for _ in range(3):
                 pipeline.ultrasound_search()
         else:
             pipeline.ultrasound_search(v=5, r=0, connect=0, block=1)

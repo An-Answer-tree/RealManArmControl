@@ -281,172 +281,191 @@ class Gemini335Controller:
         print()
 
 
-
     # =================================Private Utils Function=================================
-    def _save_depth_frame(self, frame: DepthFrame):
-        """
-        Save depth_frame shotted by camera to uint16 png
+    def _save_depth_frame(self, frame: "DepthFrame") -> np.ndarray:
+        """Save a depth frame to a 16-bit PNG and return the raw depth array.
+
+        Reads the device-provided depth buffer (millimeters, uint16), reshapes it to
+        (H, W), writes it to disk, and returns the numpy array.
 
         Args:
-            frame (DepthFrame): Raw data recorded by depth camera
+            frame: Depth frame as returned by ``get_depth_frame()``.
 
         Returns:
-            data [np.uint16]: depth graph (mm)
+            np.ndarray: Depth image of shape (H, W) with dtype ``np.uint16`` (mm).
+
+        Raises:
+            ValueError: If the frame payload size does not match ``H*W*2`` bytes.
+            OSError: If writing the PNG fails.
         """
-        # Process depth frame to depth data
         width = self.Depth_width
         height = self.Depth_height
-        # scale = frame.get_depth_scale()
-        data = np.frombuffer(frame.get_data(), dtype=np.uint16)
-        data = data.reshape((height, width))
 
-        # Create depth graph save directory
+        # Sanity check on payload size
+        payload = frame.get_data()
+        if len(payload) != width * height * 2:
+            raise ValueError(
+                f"Depth payload size mismatch: got {len(payload)} bytes, "
+                f"expected {width*height*2}."
+            )
+
+        # Convert to (H, W) uint16 depth map
+        data = np.frombuffer(payload, dtype=np.uint16).reshape((height, width))
+
+        # Ensure output directory exists
         save_depth_dir = os.path.join(self.save_path, "depth_images")
         os.makedirs(save_depth_dir, exist_ok=True)
-        # Set file name
-        filename = os.path.join(save_depth_dir, f"/depth_{width}x{height}_{self.time_stamp}.png")
-        cv2.imwrite(filename, data)
-        print(colored(f"\nDepth image saved({data.shape}):\n{filename}", "yellow"))
 
-        data = np.array(data)
+        # Build filename (no leading slash!)
+        filename = os.path.join(
+            save_depth_dir, f"depth_{width}x{height}_{self.time_stamp}.png"
+        )
+
+        # Write 16-bit PNG
+        if not cv2.imwrite(filename, data):
+            raise OSError(f"Failed to write depth image: {filename}")
+
+        print(colored(f"\nDepth image saved({data.shape}):\n{filename}", "yellow"))
         return data
 
+    def _save_color_frame(self, frame: "ColorFrame") -> np.ndarray:
+        """Save an RGB color frame to disk and return it as a NumPy array.
 
-    def _save_color_frame(self, frame: ColorFrame):
-        """
-        Save RGB image to file
+        Converts the incoming SDK frame to a BGR OpenCV image, persists it as PNG,
+        and returns the image in **RGB** channel order.
 
         Args:
-            frame (ColorFrame): RGB frame from get_color_frame()
+            frame: Color frame as returned by ``get_color_frame()``.
 
         Returns:
-            image (np.ndarray): Image matrix
+            np.ndarray: RGB image of shape (H, W, 3) with dtype ``np.uint8``.
+
+        Raises:
+            RuntimeError: If converting the input frame to an image fails.
+            OSError: If writing the PNG fails.
         """
-        # Process frame to bgr image
-        image = frame_to_bgr_image(frame)
-        if image is None:
-            raise RuntimeError(colored("\nfailed to convert frame to image", "red"))
-        
-        # Image infomation
+        # Convert SDK frame → BGR ndarray (OpenCV)
+        image_bgr = frame_to_bgr_image(frame)
+        if image_bgr is None:
+            raise RuntimeError(colored("\nFailed to convert frame to image", "red"))
+
         width = self.RGB_width
         height = self.RGB_height
 
-        # Create RGB image save directory
+        # Prepare output directory
         save_image_dir = os.path.join(self.save_path, "RGB_images")
         os.makedirs(save_image_dir, exist_ok=True)
-        # Set filename
-        filename = os.path.join(save_image_dir, f"/RGB_{width}x{height}_{self.time_stamp}.png")
-        # Save image
-        cv2.imwrite(filename, image)
-        print(colored(f"\nRGB image saved({image.shape}):\n{filename}", "yellow"))
 
-        # Convert BGR to RGB
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = np.array(image)
-        return image
-    
-    def _save_point_cloud(self, frame):
-        # Config point cloud filter
-        point_format = OBFormat.RGB_POINT
-        self.point_cloud_filter.set_create_point_format(point_format)
-        # Process frame using configed filter
-        point_cloud_frame = self.point_cloud_filter.process(frame)
+        # Build filename (no leading slash!)
+        filename = os.path.join(
+            save_image_dir, f"RGB_{width}x{height}_{self.time_stamp}.png"
+        )
 
-        # Create point clouds save directory
-        save_pointcloud_dir = os.path.join(self.save_path, "point_clouds")
-        os.makedirs(save_pointcloud_dir, exist_ok=True)
-        # Save point cloud ply file
-        filename = os.path.join(save_pointcloud_dir, f"point_cloud_{self.time_stamp}.ply")
-        save_point_cloud_to_ply(filename, point_cloud_frame)
+        # Persist BGR image
+        if not cv2.imwrite(filename, image_bgr):
+            raise OSError(f"Failed to write RGB image: {filename}")
 
-        # Get RGBD point cloud data
-        point_cloud = self.point_cloud_filter.calculate(point_cloud_frame)
+        print(colored(f"\nRGB image saved({image_bgr.shape}):\n{filename}", "yellow"))
 
-        return point_cloud
-    
-    def _check_pointcloud(self, frame):
+        # Return as RGB
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        return np.array(image_rgb)
+
+    def _save_point_cloud(self, frame: "DepthFrame") -> np.ndarray:
+        """Compute and save an RGB point cloud (.ply), returning the point data.
+
+        Configures the point cloud filter to produce RGB points, processes the input
+        frame, writes a PLY file, and returns the computed XYZRGB array.
+
+        Args:
+            frame: Input frame compatible with the configured point cloud filter
+                (e.g., a synchronized depth/color frame or frameset).
+
+        Returns:
+            np.ndarray: Array of shape (N, 6) or (H*W, 6) with columns
+                ``[x, y, z, r, g, b]``. The exact shape depends on the SDK output.
+
+        Raises:
+            OSError: If saving the PLY file fails.
+            RuntimeError: If point cloud calculation fails.
+        """
         point_format = OBFormat.RGB_POINT
         self.point_cloud_filter.set_create_point_format(point_format)
 
         point_cloud_frame = self.point_cloud_filter.process(frame)
         if point_cloud_frame is None:
-            return False
-        else:
-            return True
-        
-    def _check_depth(self, depth_frame):
+            raise RuntimeError("Point cloud filter returned None.")
+
+        save_pointcloud_dir = os.path.join(self.save_path, "point_clouds")
+        os.makedirs(save_pointcloud_dir, exist_ok=True)
+
+        filename = os.path.join(save_pointcloud_dir, f"point_cloud_{self.time_stamp}.ply")
+        save_point_cloud_to_ply(filename, point_cloud_frame)
+
+        # Calculate XYZRGB ndarray from the frame
+        point_cloud = self.point_cloud_filter.calculate(point_cloud_frame)
+        if point_cloud is None:
+            raise RuntimeError("Failed to calculate point cloud data.")
+
+        return point_cloud
+
+    def _check_pointcloud(self, frame: "DepthFrame") -> bool:
+        """Check whether a point cloud frame can be produced for the given input.
+
+        Args:
+            frame: Input frame to feed to the point cloud filter.
+
+        Returns:
+            bool: ``True`` if the filter produces a non-None point cloud frame;
+            ``False`` otherwise.
+        """
+        point_format = OBFormat.RGB_POINT
+        self.point_cloud_filter.set_create_point_format(point_format)
+
+        point_cloud_frame = self.point_cloud_filter.process(frame)
+        return point_cloud_frame is not None
+
+    def _check_depth(self, depth_frame: "DepthFrame") -> bool:
+        """Validate the raw depth frame payload size against width/height.
+
+        Args:
+            depth_frame: Depth frame to validate.
+
+        Returns:
+            bool: ``True`` if ``data_size == width * height * 2``; ``False`` otherwise.
+        """
         depth_width = depth_frame.get_width()
         depth_height = depth_frame.get_height()
         depth_data_size = depth_frame.get_data_size()
-        if depth_data_size != depth_width * depth_height * 2:
-            return False
-        else:
-            return True
-    
-    def _depth_post_process(self, depth_frame):
-        """
-        Post-Process the depth data using recommended filter
+        return depth_data_size == depth_width * depth_height * 2
+
+    def _depth_post_process(self, depth_frame: "DepthFrame") -> "DepthFrame":
+        """Apply the configured post-filters to a depth frame.
+
+        Iterates over ``self.filter_list`` and applies each enabled filter in order.
+        Performs a completeness check before filtering.
 
         Args:
-            depth_frame (np.ndarray): Depth frame from get_depth_frame()
+            depth_frame: Input depth frame (uint16, mm) from ``get_depth_frame()``.
 
         Returns:
-            depth_frame (np.ndarray): Processed depth frame
+            DepthFrame: The filtered depth frame (SDK object, not a NumPy array).
+
+        Raises:
+            RuntimeError: If the input depth data is incomplete.
         """
-        for i in range(len(self.filter_list)):
-            post_filter = self.filter_list[i]
+        for post_filter in self.filter_list:
             if post_filter and post_filter.is_enabled() and depth_frame:
-                depth_data_size = depth_frame.get_data()
-                if len(depth_data_size) < (depth_frame.get_width() * depth_frame.get_height() * 2):
-                    raise RuntimeError(colored("depth data is not complete", "red"))
+                payload = depth_frame.get_data()
+                if len(payload) < (depth_frame.get_width() * depth_frame.get_height() * 2):
+                    raise RuntimeError(colored("Depth data is not complete", "red"))
 
                 new_depth_frame = post_filter.process(depth_frame)
                 depth_frame = new_depth_frame.as_depth_frame()
-        return  depth_frame
+        return depth_frame
 
     
-    def get_depth(
-        self,
-        *,
-        depth_img_path: str,
-        depth_data: Optional[np.ndarray] = None,
-        point: Tuple[int, int]
-    ) -> Tuple[int, int, int]:
-        """
-        Get the depth (in millimeters) at a specific pixel coordinate.
-
-        Args:
-            depth_img_path (str): Path to a saved 16‑bit PNG depth image.
-            depth_data (Optional[np.ndarray]): A pre‑loaded depth array (dtype=uint16).
-            point (Tuple[int, int]): Pixel coordinates (u, v).
-
-        Returns:
-            Tuple[int, int, int]: (u, v, depth_mm) where depth_mm is the depth value in millimeters.
-        """
-        u, v = point
-
-        # If no depth array is provided, load it from file
-        if depth_data is None:
-            # Read image unchanged to preserve 16‑bit values
-            depth_data = cv2.imread(depth_img_path, cv2.IMREAD_UNCHANGED)
-            if depth_data is None:
-                raise IOError(f"Failed to load depth image from '{depth_img_path}'")
-
-        # Verify the image is single‑channel uint16
-        if depth_data.dtype != np.uint16 or depth_data.ndim not in (2,):
-            raise ValueError("Depth data must be a 2D uint16 array")
-
-        height, width = depth_data.shape
-
-        # Ensure the point is within image bounds
-        if not (0 <= u < width and 0 <= v < height):
-            raise ValueError(f"Point ({u}, {v}) is outside image bounds ({width}×{height})")
-
-        # Retrieve the depth value at (v, u)
-        depth_mm = int(depth_data[v, u])
-
-        return (u, v, depth_mm)
-    
+    # =================================Algorithm=================================
     def get_point_xyz_from_pointcloud(
         self,
         points: np.ndarray,
@@ -481,61 +500,99 @@ class Gemini335Controller:
        
     # =================================Camera Action=================================
     def take_photo(self):
-        """
-        Capture one RGB+Depth frame from the Gemini 355 camera.
+        """Capture one RGB + Depth frame and persist outputs to disk.
+
+        This method blocks until a valid, aligned frame set is obtained from the
+        Gemini 355 camera. It performs basic sanity checks (frame presence, point
+        cloud availability, depth payload size), then:
+        1) Saves a colored point cloud (.ply).
+        2) Saves an RGB image (PNG).
+        3) Post-processes and saves a depth image (uint16 PNG, millimeters).
 
         Args:
-            None
+            None.
 
         Returns:
-            Tuple: 
-                - time_stamp: int
-                - RGB_image: BGR color image (png) as a numpy.ndarray.
-                - Depth_graph: Depth Graph (png) as a numpy.ndarray.
-                - Point: point clouds as a numpy.ndarray
+            Tuple[int, np.ndarray, np.ndarray, np.ndarray]:
+                A 4-tuple ``(time_stamp, RGB_image, depth_graph, point_cloud)`` where:
+                - ``time_stamp``: ``int``. Milliseconds since epoch at capture start.
+                - ``RGB_image``: ``np.ndarray``. RGB image of shape ``(H, W, 3)``,
+                dtype ``uint8`` (converted to RGB before return).
+                - ``depth_graph``: ``np.ndarray``. Depth map of shape ``(H, W)``,
+                dtype ``uint16`` in millimeters.
+                - ``point_cloud``: ``np.ndarray``. SDK-dependent layout, typically
+                ``(N, 6)`` or ``(H*W, 6)`` with columns ``[x, y, z, r, g, b]``.
+
+        Notes:
+            - The actual file I/O is delegated to helper methods:
+            ``_save_point_cloud``, ``_save_color_frame``, and ``_save_depth_frame``.
+            - ``self.align_filter`` is applied before point-cloud validation and again
+            before saving color/depth to ensure alignment.
         """
+        # Generate a millisecond timestamp for filenames and return payload.
         self.time_stamp = int(time.time() * 1000)
+
+        # Initialize frame holder for the polling loop.
         frames = None
 
+        # Poll the pipeline until a complete, valid, aligned frame set is obtained.
         while True:
+            # Wait for a new frameset with a 100 ms timeout.
             frames = self.pipeline.wait_for_frames(100)
-            # Check frames
+
+            # If nothing arrived within the timeout, try again.
             if frames is None:
                 continue
-            # Check point cloud data
+
+            # Align frames (e.g., depth to color) and verify point-cloud feasibility.
             frame = self.align_filter.process(frames)
             point_cloud_tag = self._check_pointcloud(frame)
             if point_cloud_tag == False:
+                # Point cloud not available yet; keep polling.
                 continue
-            # Check RGB and Depth data
+
+            # Basic presence check for color and depth frames before alignment.
             color_frame = frames.get_color_frame()
             depth_frame = frames.get_depth_frame()
             if color_frame == None or depth_frame == None:
+                # Missing one of the streams; keep polling.
                 continue
-            # Align RGB and depth
+
+            # Align again to ensure RGB and depth share the same geometry.
             frames = self.align_filter.process(frames)
             if not frames:
+                # Alignment produced no output; keep polling.
                 continue
             frames = frames.as_frame_set()
-            # Check RGB and Depth data
+
+            # Re-fetch aligned color and depth frames from the aligned frameset.
             color_frame = frames.get_color_frame()
             depth_frame = frames.get_depth_frame()
             if color_frame == None or depth_frame == None:
+                # One of the aligned streams is missing; keep polling.
                 continue
-            # Check Depth
+
+            # Validate depth payload size (width * height * 2 bytes for uint16).
             depth_tag = self._check_depth(depth_frame)
             if depth_tag == False:
+                # Incomplete depth data; keep polling.
                 continue
             else:
+                # All checks passed; proceed to save and return.
                 break
-        
-        # Save point cloud
+
+        # Save point cloud using the previously aligned frame.
         point_cloud = self._save_point_cloud(frame)
-        # Save RGB image
+
+        # Save RGB image; helper returns an RGB ndarray.
         RGB_image = self._save_color_frame(color_frame)
-        # Post-Process and Save Depth Image
+
+        # Post-process depth (filters) and save as uint16 PNG; helper returns ndarray.
         depth_frame = self._depth_post_process(depth_frame)
         depth_graph = self._save_depth_frame(depth_frame)
+
+        # Optional spacing in console output.
         print()
 
+        # Return: timestamp, RGB image (RGB), depth map (uint16, mm), and point cloud.
         return (self.time_stamp, RGB_image, depth_graph, point_cloud)
