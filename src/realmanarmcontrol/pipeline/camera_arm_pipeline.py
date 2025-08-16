@@ -72,6 +72,7 @@ class Pipeline():
         self.Depth_width = pipeline_config.Depth_width
         self.Depth_height = pipeline_config.Depth_height
         self.Depth_fps = pipeline_config.Depth_fps
+        self.save_path = pipeline_config.save_path
         
         # Arm and Camera Instance
         self.arm_controller = self.create_arm()
@@ -125,6 +126,7 @@ class Pipeline():
             Depth_width=self.Depth_width,
             Depth_height=self.Depth_height,
             Depth_fps=self.Depth_fps,
+            save_path=self.save_path
         )
         print(colored(self.line, color="yellow"))
         return camera_controller
